@@ -19,7 +19,23 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ... (CORS configuration remains the same) ...
+// Replace 'http://localhost:5173' with the URL where your frontend will be hosted.
+// For now, let's keep it simple, but remember to update it to your Hostinger domain later.
+const allowedOrigins = ['http://localhost:5173', 'https://primementor.com.au']; 
+// For production, you could read this from an environment variable (e.g., process.env.FRONTEND_URL)
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
+    credentials: true
+}));
 
 app.use(express.json());
 connectDB(); 
