@@ -1,7 +1,7 @@
 // backend/controllers/userController.js
 
 import asyncHandler from 'express-async-handler';
-import User from '../models/UserModel.js';
+import User from '../models/UserModel.js'; 
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
@@ -16,7 +16,7 @@ const ZOOM_CLIENT_SECRET = process.env.ZOOM_CLIENT_SECRET;
 
 const getOAuthToken = async () => {
     const tokenUrl = 'https://zoom.us/oauth/token';
-    const authString = `${ZOOM_CLIENT_ID}:${ZOOM_CLIENT_SECRET}`;
+    const authString = `${ZOOM_CLIENT_ID}:${ZOOM_CLIENT_SECRET}`; 
     const authHeader = Buffer.from(authString).toString('base64');
 
     const params = new URLSearchParams();
@@ -40,12 +40,24 @@ const getOAuthToken = async () => {
 const createZoomMeeting = async (topic, preferredDate, preferredTime) => {
     try {
         const accessToken = await getOAuthToken();
+        
         const dateOnly = preferredDate.substring(0, 10);
         const date = new Date(dateOnly);
 
-        const [startTimeStr] = preferredTime.split(' ');
-        let [hour, minute] = startTimeStr.slice(0, -2).split(':').map(Number);
-        const period = startTimeStr.slice(-2).toLowerCase();
+        const lowerCaseTime = preferredTime.toLowerCase();
+        
+        // This regex is slightly safer than simple split() for time parsing
+        const timeParts = lowerCaseTime.match(/(\d{1,2}:\d{2})(am|pm)/); 
+        
+        if (!timeParts) {
+             console.error('Time parsing failed for:', preferredTime);
+             throw new Error('Invalid time format received for Zoom meeting.');
+        }
+
+        const startTimeStr = timeParts[1]; 
+        const period = timeParts[2];       
+
+        let [hour, minute] = startTimeStr.split(':').map(s => parseInt(s.trim()));
         
         let adjustedHour = hour;
         if (period === 'pm' && hour !== 12) {
@@ -91,17 +103,38 @@ const createZoomMeeting = async (topic, preferredDate, preferredTime) => {
     }
 };
 
-export const createBooking = async (req, res) => {
-    const studentClerkId = req.auth.userId; 
-    const { courseDetails, scheduleDetails } = req.body;
+export const createBooking = asyncHandler(async (req, res) => {
+    const studentClerkId = req.auth.userId;
+    const { courseDetails, scheduleDetails, studentDetails, guardianDetails } = req.body;
+    const { 
+        purchaseType, 
+        preferredDate, 
+        preferredTime, 
+        preferredWeekStart, 
+        preferredTimeMonFri, 
+        preferredTimeSaturday,
+        postcode,
+        numberOfSessions // Assuming this is present for Starter Pack (6)
+    } = scheduleDetails;
 
     try {
-        const student = await User.findOne({ clerkId: studentClerkId });
-        console.log("Student record found:", student);
+        let student = await User.findOne({ clerkId: studentClerkId }); 
+        
         if (!student) {
-            return res.status(404).json({ success: false, message: "Student not found." });
-        }
+            const nameToUse = studentDetails?.first && studentDetails?.last 
+                ? `${studentDetails.first} ${studentDetails.last}`
+                : "New Student"; 
+            
+            const emailToUse = studentDetails?.email || guardianDetails?.email || 'unknown@example.com';
 
+            student = await User.create({ 
+                clerkId: studentClerkId, 
+                studentName: nameToUse,
+                email: emailToUse, 
+                courses: [], 
+            });
+        }
+        
         const courseExists = student.courses.some(c => c.name === courseDetails.courseTitle);
         if (courseExists) {
             return res.status(409).json({ success: false, message: 'You have already enrolled in this course.' });
@@ -113,36 +146,54 @@ export const createBooking = async (req, res) => {
         }
         const randomTeacher = teachers[Math.floor(Math.random() * teachers.length)];
 
-        console.log("Course Details Received:", courseDetails);
+        const isTrial = purchaseType === 'TRIAL';
+        
+        const finalPreferredDate = isTrial ? preferredDate : preferredWeekStart; 
+        const finalPreferredTime = isTrial ? preferredTime : preferredTimeMonFri; 
 
+        if (!finalPreferredDate || !finalPreferredTime) {
+             return res.status(400).json({ success: false, message: "Missing preferred date or time details for the booking." });
+        }
+        
+        // --- 1. Save Class Request (Pending) ---
         const newRequest = new ClassRequest({
             courseId: courseDetails.courseId,
             courseTitle: courseDetails.courseTitle,
             studentId: studentClerkId,
-            studentName: student?.studentName || "Unknown Student",
+            studentName: student.studentName, 
             teacherId: randomTeacher._id,
-            scheduleTime: scheduleDetails.preferredTime,
-            preferredDate: scheduleDetails.preferredDate,
+            scheduleTime: finalPreferredTime, 
+            preferredDate: finalPreferredDate,
+            preferredTimeMonFri: preferredTimeMonFri, 
+            preferredTimeSaturday: preferredTimeSaturday,
+            postcode: postcode, 
+            purchaseType: purchaseType, 
             status: 'pending'
         });
         await newRequest.save();
 
+        // --- 2. Create Zoom Meeting (for the first session/trial) ---
         const zoomMeetingUrl = await createZoomMeeting(
             courseDetails.courseTitle,
-            scheduleDetails.preferredDate,
-            scheduleDetails.preferredTime
+            finalPreferredDate,
+            finalPreferredTime
         );
-
+        
+        // --- 3. Add Course to Student ---
         const newCourse = {
             name: courseDetails.courseTitle,
-            description: `Trial session for ${courseDetails.courseTitle}`,
+            description: isTrial ? `Trial session for ${courseDetails.courseTitle}` : `6-Session Starter Pack for ${courseDetails.courseTitle}`, 
             teacher: randomTeacher.name,
-            duration: '1 hour trial',
-            preferredDate: scheduleDetails.preferredDate,
-            preferredTime: scheduleDetails.preferredTime,
+            duration: isTrial ? '1 hour trial' : '6 sessions total',
+            preferredDate: finalPreferredDate, 
+            preferredTime: finalPreferredTime, 
             status: 'pending',
             enrollmentDate: new Date(),
-            zoomMeetingUrl: zoomMeetingUrl
+            zoomMeetingUrl: zoomMeetingUrl,
+            // 🛑 SAVING WEEKLY FIELDS AND REMAINING SESSIONS 🛑
+            preferredTimeMonFri: isTrial ? null : preferredTimeMonFri,
+            preferredTimeSaturday: isTrial ? null : preferredTimeSaturday,
+            sessionsRemaining: isTrial ? 1 : numberOfSessions, 
         };
         student.courses.push(newCourse);
         await student.save();
@@ -155,20 +206,21 @@ export const createBooking = async (req, res) => {
 
     } catch (error) {
         console.error('Error creating booking:', error);
-        res.status(500).json({ success: false, message: 'Server error during booking.' });
+        if (error.message.includes("preferred date or time")) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
+        res.status(500).json({ success: false, message: 'Server error during booking. Please check server logs for details.' });
     }
-};
+});
 
 export const getUserCourses = asyncHandler(async (req, res) => {
     const clerkId = req.auth.userId;
-    console.log(`Fetching courses for user with clerkId: ${clerkId}`);
-
     let user = await User.findOne({ clerkId });
 
     if (!user) {
-        user = await User.create({ clerkId, courses: [] });
+        user = await User.create({ clerkId, courses: [] }); 
         return res.status(200).json({ courses: [] });
     }
-    
+
     res.status(200).json({ courses: user.courses });
 });

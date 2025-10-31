@@ -8,6 +8,7 @@ import teacherRouter from './routes/teacherRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import assessmentRoutes from './routes/assessmentRoutes.js'; 
 // REMOVE: import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
+import adminRoutes from './routes/adminRoutes.js'; // 🛑 NEW IMPORT 🛑
 // ADD:
 import { clerkMiddleware, requireAuth } from '@clerk/express';
 
@@ -59,6 +60,9 @@ app.use('/api/user', requireAuth(), userRoutes);
 
 console.log('✅ Registering assessment routes...');
 app.use('/api/assessments', assessmentRoutes); 
+
+console.log('✅ Registering admin routes...');
+app.use('/api/admin', adminRoutes); // 🛑 NEW ROUTE MOUNT 🛑
 
 // Global error handler
 app.use((err, req, res, next) => {
