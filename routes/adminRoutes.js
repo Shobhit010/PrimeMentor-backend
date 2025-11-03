@@ -2,21 +2,34 @@
 
 import express from 'express';
 import { 
-    getAllStudents, 
-    getAllTeachers, 
-    getSyllabus 
+    getAllStudents, 
+    getAllTeachers, 
+    getSyllabus,
+    getPendingClassRequests, 
+    assignTeacher,
+    adminLogin,
+    getTeacherDetailsById // NEW IMPORT
 } from '../controllers/adminController.js';
-// We'll assume any requests hitting /api/admin are already authenticated,
-// but we'll use a basic admin email check in a middleware for security.
 import { adminOnlyMiddleware } from '../middlewares/adminMiddleware.js';
 
 const router = express.Router();
+
+// --- PUBLIC ROUTES (No Middleware) ---
+router.post('/login', adminLogin);
 
 // 🛑 All Admin routes MUST be protected by the admin-only check. 🛑
 router.use(adminOnlyMiddleware);
 
 router.get('/students', getAllStudents);
+
+// Teacher routes
 router.get('/teachers', getAllTeachers);
+router.get('/teacher/:id', getTeacherDetailsById); // NEW ROUTE
+
 router.get('/syllabus', getSyllabus);
+
+// --- NEW ADMIN ROUTES (Protected) ---
+router.get('/pending-requests', getPendingClassRequests); 
+router.put('/assign-teacher/:requestId', assignTeacher); 
 
 export default router;

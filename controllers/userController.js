@@ -137,60 +137,63 @@ export const createBooking = asyncHandler(async (req, res) => {
         
         const courseExists = student.courses.some(c => c.name === courseDetails.courseTitle);
         if (courseExists) {
+            // Note: This check might be too strict if a student can enroll in the same course multiple times
+            // but for now, we'll keep it as is from the original logic.
             return res.status(409).json({ success: false, message: 'You have already enrolled in this course.' });
         }
 
-        const teachers = await TeacherModel.find({});
-        if (teachers.length === 0) {
-            return res.status(500).json({ success: false, message: "No teachers available to assign." });
-        }
-        const randomTeacher = teachers[Math.floor(Math.random() * teachers.length)];
-
+        // 🛑 REMOVED TeacherModel.find({}) and randomTeacher assignment 🛑
+        
         const isTrial = purchaseType === 'TRIAL';
         
-        const finalPreferredDate = isTrial ? preferredDate : preferredWeekStart; 
-        const finalPreferredTime = isTrial ? preferredTime : preferredTimeMonFri; 
+        // Determine the single preferred date/time for the Zoom meeting creation (for Trial/First Session)
+        // NOTE: This logic determines the initial meeting. The admin's assignment will confirm future/weekly schedule.
+        const initialPreferredDate = isTrial ? preferredDate : preferredWeekStart; 
+        const initialPreferredTime = isTrial ? preferredTime : preferredTimeMonFri; 
 
-        if (!finalPreferredDate || !finalPreferredTime) {
-             return res.status(400).json({ success: false, message: "Missing preferred date or time details for the booking." });
+        if (!initialPreferredDate || !initialPreferredTime) {
+              return res.status(400).json({ success: false, message: "Missing preferred date or time details for the booking." });
         }
         
-        // --- 1. Save Class Request (Pending) ---
+        // --- 1. Save Class Request (Pending for Admin) ---
         const newRequest = new ClassRequest({
             courseId: courseDetails.courseId,
             courseTitle: courseDetails.courseTitle,
             studentId: studentClerkId,
             studentName: student.studentName, 
-            teacherId: randomTeacher._id,
-            scheduleTime: finalPreferredTime, 
-            preferredDate: finalPreferredDate,
-            preferredTimeMonFri: preferredTimeMonFri, 
+            // 🛑 teacherId: null (default in schema) 🛑
+            purchaseType: purchaseType,
+            preferredDate: preferredDate, // Trial date
+            scheduleTime: preferredTime, // Trial time
+            preferredTimeMonFri: preferredTimeMonFri,
             preferredTimeSaturday: preferredTimeSaturday,
             postcode: postcode, 
-            purchaseType: purchaseType, 
-            status: 'pending'
+            status: 'pending',
+            subject: courseDetails.subject || 'N/A', // Assuming subject is available in courseDetails
         });
         await newRequest.save();
 
         // --- 2. Create Zoom Meeting (for the first session/trial) ---
+        // We'll create the Zoom meeting URL for the *initial* session to provide it to the student immediately, 
+        // even though the request is still pending admin review.
         const zoomMeetingUrl = await createZoomMeeting(
             courseDetails.courseTitle,
-            finalPreferredDate,
-            finalPreferredTime
+            initialPreferredDate,
+            initialPreferredTime
         );
         
-        // --- 3. Add Course to Student ---
+        // --- 3. Add Course to Student (Status: pending) ---
+        // The student's course is added with a 'pending' status. The Admin will update this status upon assignment.
         const newCourse = {
             name: courseDetails.courseTitle,
-            description: isTrial ? `Trial session for ${courseDetails.courseTitle}` : `6-Session Starter Pack for ${courseDetails.courseTitle}`, 
-            teacher: randomTeacher.name,
-            duration: isTrial ? '1 hour trial' : '6 sessions total',
-            preferredDate: finalPreferredDate, 
-            preferredTime: finalPreferredTime, 
-            status: 'pending',
+            description: isTrial ? `Trial session for ${courseDetails.courseTitle}` : `Starter Pack for ${courseDetails.courseTitle}`, 
+            teacher: 'Pending Assignment', // Hardcode to pending until admin updates
+            duration: isTrial ? '1 hour trial' : `${numberOfSessions} sessions total`,
+            preferredDate: initialPreferredDate, // The initial meeting date
+            preferredTime: initialPreferredTime, // The initial meeting time
+            status: 'pending', // 🛑 Must be pending! 🛑
             enrollmentDate: new Date(),
             zoomMeetingUrl: zoomMeetingUrl,
-            // 🛑 SAVING WEEKLY FIELDS AND REMAINING SESSIONS 🛑
             preferredTimeMonFri: isTrial ? null : preferredTimeMonFri,
             preferredTimeSaturday: isTrial ? null : preferredTimeSaturday,
             sessionsRemaining: isTrial ? 1 : numberOfSessions, 
@@ -200,12 +203,13 @@ export const createBooking = asyncHandler(async (req, res) => {
 
         res.status(201).json({ 
             success: true, 
-            message: 'Booking and request created successfully!', 
+            message: 'Booking request sent to admin for teacher assignment.', 
             course: newCourse 
         });
 
     } catch (error) {
         console.error('Error creating booking:', error);
+        // ... (Keep error handling as is) ...
         if (error.message.includes("preferred date or time")) {
             return res.status(400).json({ success: false, message: error.message });
         }

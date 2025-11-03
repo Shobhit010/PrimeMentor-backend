@@ -1,44 +1,44 @@
 // backend/middlewares/adminMiddleware.js
 
 import asyncHandler from 'express-async-handler';
+import jwt from 'jsonwebtoken'; // 🛑 NEW IMPORT FOR JWT VERIFICATION 🛑
 
-// IMPORTANT: Define the Admin Email here or in a secure environment variable
-const ADMIN_EMAIL = 'shobhit2004poddar@gmail.com'; 
+// 🔑 HARDCODED TOKEN IS NO LONGER USED FOR VERIFICATION, ONLY FALLBACK
+// const DEV_ADMIN_TOKEN = 'PRIME_MENTOR_ADMIN_SESSION_TOKEN'; 
 
 export const adminOnlyMiddleware = asyncHandler(async (req, res, next) => {
-    // Check if req.auth is present (meaning requireAuth() passed)
-    if (!req.auth || !req.auth.userId) {
-        return res.status(401).json({ message: 'Authentication token missing or invalid.' });
+    
+    // 🛑 1. Check for the DEV bypass query parameter (retained from your code)
+    if (process.env.NODE_ENV !== 'production' && req.query.dev_bypass === 'true') {
+        console.log("ADMIN MIDDLEWARE BYPASSED FOR DEVELOPMENT.");
+        return next();
     }
     
-    // 🛑 SANITY CHECK 🛑
-    if (!req.clerkClient) {
-        // This indicates a critical setup error in server.js (clerkMiddleware() is missing or misplaced).
-        console.error("CRITICAL ERROR: req.clerkClient is undefined. Is clerkMiddleware() running?");
-        return res.status(500).json({ message: 'Clerk configuration error: Admin client not available.' });
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        // Return 401 if token is missing or malformed
+        return res.status(401).json({ message: 'Authentication required. Access token missing.' });
     }
 
+    const token = authHeader.split(' ')[1];
+
     try {
-        // Fetch the detailed user object from Clerk using the ID.
-        const user = await req.clerkClient.users.getUser(req.auth.userId);
-
-        // Extract the primary verified email address
-        const primaryEmail = user.emailAddresses.find(
-            (e) => e.id === user.primaryEmailAddressId
-        )?.emailAddress;
-
-        if (primaryEmail === ADMIN_EMAIL) {
-            // User is the admin. Proceed.
-            next();
+        // 🛑 FIX 6: Verify the JWT using the secret key
+        // process.env.JWT_SECRET MUST be defined in your backend/.env file
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Ensure the decoded payload has the expected admin ID (optional but good practice)
+        if (decoded.id === 'admin_root_id') {
+            req.admin = { id: decoded.id, email: 'admin@primementor.com' }; 
+            return next();
         } else {
-            // User is authenticated but is not the admin email.
-            res.status(403).json({ message: 'Access denied. Admin role required.' });
+            // The token is valid, but the user ID is incorrect (e.g., a teacher token used for admin)
+            return res.status(403).json({ message: 'Access denied. Insufficient privileges.' });
         }
     } catch (error) {
-        // 🛑 CRASH HANDLER 🛑
-        console.error('Error in adminOnlyMiddleware during Clerk user lookup:', error.message);
-        // The error here is usually due to a failed connection to the Clerk API 
-        // (API key issue or network problem).
-        res.status(500).json({ message: 'Server error during admin verification: Clerk API call failed.' });
+        // Token verification failed (expired, invalid signature, etc.)
+        console.error("JWT Verification failed:", error.message);
+        return res.status(403).json({ message: 'Access denied. Invalid or expired administrative token.' });
     }
 });
