@@ -61,7 +61,7 @@ console.log('✅ Registering student/user routes...');
 // NOTE: By default, requireAuth() now REDIRECTS unauthenticated users. 
 // If you want the old error-throwing behavior, you'll need a custom middleware 
 // (see Clerk docs, but this is the standard new usage).
-app.use('/api/user', requireAuth(), userRoutes);
+app.use('/api/user', requireAuth({ redirectTo: false }), userRoutes);
 
 console.log('✅ Registering assessment routes...');
 app.use('/api/assessments', assessmentRoutes); 
