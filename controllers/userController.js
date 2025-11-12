@@ -13,7 +13,6 @@ import { clerkClient } from '@clerk/clerk-sdk-node';
 dotenv.config();
 
 // --- Helper Function to Manually Extract Clerk User ID ---
-// NOTE: This relies on the Clerk token format (using the 'sub' field for userId)
 const getClerkUserIdFromToken = (req) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) {
@@ -25,7 +24,6 @@ const getClerkUserIdFromToken = (req) => {
         // Clerk tokens use 'sub' (subject) to store the user ID
         return decoded?.sub || null; 
     } catch (error) {
-        // Log decode error, but the final check will be the null return
         console.error("JWT Decode Error (Clerk Token):", error);
         return null;
     }
@@ -34,12 +32,12 @@ const getClerkUserIdFromToken = (req) => {
 
 export const createBooking = asyncHandler(async (req, res) => {
     // 🛑 CRITICAL FIX: Get the user ID manually from the token instead of req.auth()
-    const studentClerkId = getClerkUserIdFromToken(req);
+    const studentClerkId = getClerkUserIdFromToken(req);
 
-    if (!studentClerkId) {
-        // 🛑 Send an explicit 401 if authentication fails
-        return res.status(401).json({ success: false, message: "Authentication failed. Please log in again." });
-    }
+    if (!studentClerkId) {
+        // 🛑 Send an explicit 401 if authentication fails
+        return res.status(401).json({ success: false, message: "Authentication failed. Please log in again." });
+    }
 
     console.log(req.body.scheduleDetails);
     // OLD LINE: const studentClerkId = req.auth().userId; // REMOVED/REPLACED
@@ -63,8 +61,19 @@ export const createBooking = asyncHandler(async (req, res) => {
         
         let emailToUse = studentDetails?.email || guardianDetails?.email; 
 
-        if (!emailToUse) {
-            const clerkUser = await clerkClient.users.getUser(studentClerkId);
+        // Safely fetch Clerk user details
+        let clerkUser;
+        try {
+            clerkUser = await clerkClient.users.getUser(studentClerkId);
+        } catch (clerkError) {
+            console.error('Clerk User Lookup Failed during booking:', clerkError);
+            // Fallback email if Clerk lookup fails
+            if (!emailToUse) {
+                emailToUse = 'unknown_clerk_failure@example.com';
+            }
+        }
+        
+        if (!emailToUse && clerkUser) {
             emailToUse = clerkUser?.emailAddresses[0]?.emailAddress || 'unknown@example.com';
         }
         
@@ -162,17 +171,24 @@ export const createBooking = asyncHandler(async (req, res) => {
 // getUserCourses (No Change needed)
 export const getUserCourses = asyncHandler(async (req, res) => {
     // 🛑 CRITICAL FIX: Get the user ID manually from the token instead of req.auth()
-    const clerkId = getClerkUserIdFromToken(req);
+    const clerkId = getClerkUserIdFromToken(req);
 
-    if (!clerkId) {
-        // 🛑 Send an explicit 401 if authentication fails
-        return res.status(401).json({ courses: [], message: "Authentication failed. Please log in again." });
+    if (!clerkId) {
+        // 🛑 Send an explicit 401 if authentication fails
+        return res.status(401).json({ courses: [], message: "Authentication failed. Please log in again." });
+    }
+
+    let clerkUser;
+    // 🛑 NEW FIX: Explicitly catch errors from Clerk client API calls 🛑
+    try {
+        clerkUser = await clerkClient.users.getUser(clerkId);
+    } catch (error) {
+        console.error(`Clerk user lookup failed for ID: ${clerkId}`, error);
+        // If Clerk fails, we cannot proceed.
+        return res.status(500).json({ courses: [], message: 'Internal Server Error while communicating with authentication service.' });
     }
-
-    // OLD LINE: const clerkId = req.auth().userId; // REMOVED/REPLACED
     
     try {
-        const clerkUser = await clerkClient.users.getUser(clerkId);
         
         if (!clerkUser) {
             console.error(`Clerk user not found for ID: ${clerkId}`);
