@@ -1,11 +1,18 @@
+// backend/routes/assessmentRoutes.js
 import express from 'express';
-import { submitAssessmentFlow } from '../controllers/assessmentController.js';
+import { submitAssessmentRequest, getAllAssessments } from '../controllers/assessmentController.js';
+import { adminOnlyMiddleware } from '../middlewares/adminMiddleware.js';
 
 const router = express.Router();
 
 // @route POST /api/assessments/submit
 // @desc Save new assessment request data to the database
-// @access Public (as Clerk auth is not strictly required to complete the flow, only to book)
-router.post('/submit', submitAssessmentFlow);
+// @access Public (For the public-facing modal)
+router.post('/submit', submitAssessmentRequest);
+
+// @route GET /api/assessments
+// @desc Get all assessment requests (Admin dashboard)
+// @access Private (Admin Only)
+router.get('/', adminOnlyMiddleware, getAllAssessments); // Protected by middleware
 
 export default router;
